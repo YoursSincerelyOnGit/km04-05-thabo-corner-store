@@ -144,3 +144,99 @@ FROM sales s
 JOIN products p ON s.product_id = p.product_id
 GROUP BY p.product_id, p.product_name
 ORDER BY revenue DESC;
+
+
+QUERY 1 — Revenue per product
+('5kg Maize Meal', 801.0)
+('Eggs (6 pack)', 364.0)
+('Lays Chips 100g', 352.0)
+('Sunlight Dishwashing Liquid', 283.75)
+('Bar One Chocolate', 224.0)
+('Sugar 1kg', 220.5)
+('Coca-Cola 500ml', 148.0)
+('Airtime Voucher R10', 140.0)
+('Simba Chips 120g', 132.0)
+('Full Cream Milk 1L', 129.0)
+('Fanta Orange 500ml', 111.0)
+('Data Bundle 1GB', 98.0)
+('Coca-Cola 500ml', 74.0)
+('White Bread 700g', 48.0)
+
+QUERY 2 — Best selling product
+('Bar One Chocolate', 16)
+
+QUERY 3 — Sales by payment method
+('Cash', 18)
+('Mobile Money', 12)
+('Card', 12)
+('Unknown', 9)
+
+QUERY 4 — Revenue by category
+('Household', 1305.25)
+('Snacks', 708.0)
+('Dairy', 493.0)
+('Beverages', 333.0)
+('Airtime & Data', 238.0)
+('Bakery', 48.0)
+
+QUERY 5 — Never-sold products
+
+## Charts
+
+### revenue_per_product.png
+A bar chart showing total revenue (quantity × unit_price, summed across
+all sales) per product, sorted highest first. It shows at a glance which
+products carry the shop — 5kg Maize Meal, Eggs, and Lays Chips lead.
+
+### monthly_trend.png
+A line chart showing total units sold per month. It shows whether sales
+are growing, flat, or falling month over month.
+
+## CIA Triad Reflection
+
+**Confidentiality.** The login gate protects confidentiality by requiring
+a password before reports can be viewed. The password itself is never
+stored — only its SHA-256 hash. Even if someone reads security.py, they
+cannot reverse the hash back to the password. In a real system the hash
+would live in a database with restricted access rather than hard-coded in
+source; I noted this as a limitation.
+
+**Integrity.** The login gate does not protect data integrity — a logged-in
+user could still corrupt data. Integrity is instead enforced by the schema:
+product_id and sale_id are PRIMARY KEYs (preventing duplicate sales),
+sales.product_id is a FOREIGN KEY to products (preventing orphaned sales),
+and NOT NULL constraints block incomplete records from entering the system.
+
+**Availability.** The biggest availability risk is that this project lives
+on one laptop with no backup. If the laptop dies, the data is lost. For a
+real deployment I would recommend scheduled backups of store.db to cloud
+storage, and moving the database to a shared machine or cloud service so
+it isn't tied to a single device.
+
+## Key Business Insights for Thabo
+
+**Household goods carry the shop.** Household products (maize meal,
+sugar, dishwashing liquid) made R1,305 of your total revenue — more than
+double any other category. Snacks came second at R708. Never let your
+household staples run out.
+
+**Bar One Chocolate is your surprise best-seller** — 16 units sold,
+more than any other product.
+
+**Most customers pay in cash** (18 sales). Mobile Money and Card tied at
+12 each. Only 9 sales had no payment method recorded. Card fees, if you
+ever add them, would affect only a fifth of your customers.
+
+**You have duplicate listings.** You have two Coca-Cola 500ml entries
+(P001 and P015) with identical prices. Worth cleaning up in your
+spreadsheet — it makes reports harder to read.
+
+**You're losing data to gaps in your records.** Of 71 raw sales rows,
+20 had to be dropped — missing dates, missing quantities, or references
+to products that don't exist. Keeping dates in one consistent format
+(YYYY-MM-DD) and never leaving a price or quantity blank would make
+these reports more trustworthy.
+
+**Your busiest month was January 2026** with 63 units sold, dropping to
+54 in February. Worth watching whether that's seasonal (post-festive
+lull) or a genuine slowdown.
