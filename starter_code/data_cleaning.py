@@ -6,108 +6,98 @@ Task 2: Load the raw CSV files and clean them.
 This module covers KM-04 topics: Introduction to Data (data types,
 errors of omission) and Data in Spreadsheets.
 
-The raw files in data/products.csv and data/sales.csv contain REAL
-data-quality problems on purpose, so you get practice fixing them:
-
-  products.csv issues to find and fix:
-    - Some products are missing a unit_price
-    - One product is missing its product_name
-    - Category text is inconsistently capitalised (e.g. "beverages" vs "Beverages")
-    - One exact duplicate row
-
-  sales.csv issues to find and fix:
-    - sale_date is written in at least FOUR different formats
-    - Some rows have a missing sale_date (an error of omission)
-    - Some rows have a missing quantity
-    - Some rows have a missing payment_method
-    - A few rows reference a product_id that does not exist in products.csv
-    - One exact duplicate row
-
-You must handle every one of these before the data moves on to the
-database in database.py. Document the decisions you make (e.g. "rows
-with a missing sale_date were dropped because we cannot analyse sales
-trends without a date") in your README findings section.
+Date format decision (documented in README):
+    Raw sale_date values come in four formats:
+        YYYY-MM-DD, DD/MM/YYYY, YYYY/MM/DD, DD-MM-YYYY
+    Row S0070 ("14-02-2026") proves the dash format must be DD-MM-YYYY
+    (day-first), because 14 cannot be a month. By consistency, all
+    non-ISO slash/dash values are treated as day-first. ISO values
+    (YYYY-MM-DD) and YYYY/MM/DD values are unambiguous.
 """
 
 import pandas as pd
 
 
+def _parse_date(value):
+    """Internal helper: parse one raw date string using day-first rules."""
+    if value is None:
+        return pd.NaT
+    text = str(value).strip()
+    if text == "" or text.lower() == "nan":
+        return pd.NaT
+
+    # ISO: YYYY-MM-DD
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        return pd.to_datetime(text, format="%Y-%m-%d", errors="coerce")
+
+    # YYYY/MM/DD
+    if len(text) >= 10 and text[4] == "/" and text[7] == "/" and text[:4].isdigit():
+        return pd.to_datetime(text, format="%Y/%m/%d", errors="coerce")
+
+    # DD/MM/YYYY or DD-MM-YYYY — day-first (justified by S0070)
+    normalised = text.replace("-", "/")
+    return pd.to_datetime(normalised, format="%d/%m/%Y", errors="coerce")
+
+
 def load_raw_data(products_path: str, sales_path: str):
-    """
-    Load the two raw CSV files into pandas DataFrames.
-
-    Args:
-        products_path: file path to products.csv
-        sales_path: file path to sales.csv
-
-    Returns:
-        (products_df, sales_df) tuple of pandas DataFrames, UNCLEANED.
-    """
-    # TODO:
-    #   1. Use pd.read_csv() to load both files.
-    #   2. Return them as a tuple: (products_df, sales_df)
-    raise NotImplementedError
+    """Load both raw CSVs into pandas DataFrames."""
+    products_df = pd.read_csv(products_path)
+    sales_df = pd.read_csv(sales_path)
+    return products_df, sales_df
 
 
 def clean_products(products_df: "pd.DataFrame") -> "pd.DataFrame":
-    """
-    Clean the products DataFrame.
+    """Clean the products DataFrame."""
+    df = products_df.copy()
 
-    Must handle:
-        - Missing unit_price (decide: drop the row, or fill with a sensible
-          value? Justify your choice in the README.)
-        - Missing product_name (a product with no name is not usable data —
-          what should happen to that row?)
-        - Inconsistent category capitalisation (standardise to Title Case,
-          e.g. "beverages" -> "Beverages")
-        - Duplicate rows (remove them)
+    # Drop rows with no product_name (unusable in any report)
+    df = df[df["product_name"].notna() & (df["product_name"].astype(str).str.strip() != "")]
 
-    Returns:
-        A cleaned copy of the DataFrame. Do not modify products_df in place.
-    """
-    # TODO: implement the cleaning steps described above.
-    raise NotImplementedError
+    # Fill missing unit_price with the median price of the same category,
+    # falling back to the overall median if an entire category is blank
+    df["unit_price"] = df.groupby("category")["unit_price"].transform(
+        lambda x: x.fillna(x.median())
+    )
+    df["unit_price"] = df["unit_price"].fillna(df["unit_price"].median())
+
+    # Standardise category capitalisation
+    df["category"] = df["category"].astype(str).str.strip().str.title()
+
+    # Remove exact duplicate rows
+    df = df.drop_duplicates()
+
+    return df.reset_index(drop=True)
 
 
 def clean_sales(sales_df: "pd.DataFrame", valid_product_ids) -> "pd.DataFrame":
-    """
-    Clean the sales DataFrame.
+    """Clean the sales DataFrame."""
+    df = sales_df.copy()
 
-    Args:
-        sales_df: the raw sales DataFrame
-        valid_product_ids: a collection of product_id values that exist
-            in the cleaned products table (use this to catch invalid /
-            mistyped product references)
+    # 1. Parse dates (day-first — see module docstring for justification)
+    df["sale_date"] = df["sale_date"].apply(_parse_date)
 
-    Must handle:
-        - Standardise sale_date to a single format: YYYY-MM-DD
-          (hint: pandas.to_datetime() can parse several formats if you
-          pass them one at a time, or try errors="coerce" and inspect
-          what fails)
-        - Rows with a missing or unparseable sale_date
-        - Rows with a missing quantity
-        - Rows with a missing payment_method (what's a sensible default?
-          "Unknown" is a common, honest choice — don't guess a specific method)
-        - Rows whose product_id is NOT in valid_product_ids
-        - Duplicate rows
+    # 2. Drop rows we cannot analyse: no date, no quantity
+    df = df[df["sale_date"].notna()]
+    df = df[df["quantity"].notna()]
 
-    Returns:
-        A cleaned copy of the DataFrame with a standardised sale_date
-        column (as a string in YYYY-MM-DD format) and no missing values
-        in quantity or product_id.
-    """
-    # TODO: implement the cleaning steps described above.
-    raise NotImplementedError
+    # 3. Drop rows whose product_id is not in the cleaned products table
+    df = df[df["product_id"].isin(valid_product_ids)]
+
+    # 4. Fill missing payment_method and customer_type with "Unknown"
+    df["payment_method"] = df["payment_method"].fillna("Unknown")
+    df["customer_type"] = df["customer_type"].fillna("Unknown")
+
+    # 5. Remove exact duplicate rows
+    df = df.drop_duplicates()
+
+    # 6. Types: quantity as int, sale_date as YYYY-MM-DD string
+    df["quantity"] = df["quantity"].astype(int)
+    df["sale_date"] = df["sale_date"].dt.strftime("%Y-%m-%d")
+
+    return df.reset_index(drop=True)
 
 
 def cleaning_summary(raw_df: "pd.DataFrame", clean_df: "pd.DataFrame", name: str) -> str:
-    """
-    Build a short, human-readable string summarising how many rows were
-    removed or changed during cleaning. You will paste this into your
-    README findings section.
-
-    Example output:
-        "products: 16 raw rows -> 14 clean rows (2 removed)"
-    """
-    # TODO: compare len(raw_df) and len(clean_df) and format a message.
-    raise NotImplementedError
+    """Summarise how many rows were removed during cleaning."""
+    removed = len(raw_df) - len(clean_df)
+    return f"{name}: {len(raw_df)} raw rows -> {len(clean_df)} clean rows ({removed} removed)"
