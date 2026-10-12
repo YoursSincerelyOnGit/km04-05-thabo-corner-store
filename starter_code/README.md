@@ -64,3 +64,83 @@ also references these exact names.
 
 Good luck — and remember to commit your progress to GitHub regularly
 as you complete each task, not just once at the end!
+## Data Cleaning Decisions
+
+### products.csv (16 raw → 14 clean, 2 rows removed)
+
+- **P009 (blank product_name) — dropped.** A product with no name
+  cannot appear in any report for Thabo, so the row is unusable.
+- **P006 and P013 (blank unit_price) — filled with the median price of
+  the same category.** Dropping them would lose valid sales records
+  (P013 has eight sales). Median was chosen over mean because prices
+  are skewed by high-value items like the R89 maize meal.
+- **Category capitalisation standardised to Title Case** so that
+  "beverages" and "Beverages" are treated as one category in SQL
+  GROUP BY.
+- **One exact duplicate row (P003) removed.** Note that P001 and P015
+  are both "Coca-Cola 500ml" at R18.50 but with different product_ids —
+  this is NOT treated as a duplicate because they have distinct primary
+  keys, but it is flagged for Thabo to confirm with his supplier.
+
+### sales.csv (71 raw → 51 clean, 20 rows removed)
+
+**Date format decision (the important one):**
+Raw dates appear in four formats: `YYYY-MM-DD`, `DD/MM/YYYY`,
+`YYYY/MM/DD`, and `DD-MM-YYYY`. The dash format is ambiguous on its
+own — `05-01-2026` could be 5 January or 1 May. Row **S0070
+(`14-02-2026`)** resolves this: 14 cannot be a month, so the dash
+format must be `DD-MM-YYYY` (day-first). By consistency, the slash
+format is also day-first. All dates are standardised to ISO
+`YYYY-MM-DD`. I chose day-first because South African date conventions
+are day-first and because the data itself provides evidence for it —
+this was a documented decision, not a silent guess.
+
+- **14 rows with missing sale_date — dropped.** A sales record with no
+  date cannot contribute to the monthly trend analysis or any
+  time-based query, which are the primary business questions.
+- **4 rows with missing quantity — dropped.** Revenue = quantity ×
+  unit_price. Without a quantity, the row cannot be used in any
+  meaningful aggregate.
+- **3 rows referencing product_id P099 (does not exist in products) —
+  dropped.** These rows would create orphaned foreign keys and break
+  the JOIN in the revenue query.
+- **14 rows with missing payment_method — filled with "Unknown".**
+  Payment method is useful context but not essential for revenue or
+  trend analysis. Dropping these rows would remove ~20% of the dataset
+  for a non-critical field. "Unknown" is honest — it does not invent a
+  payment method that was never recorded.
+- **Missing customer_type — filled with "Unknown".** This is
+  explicitly described in the brief as an optional context field.
+- **One exact duplicate row (S0011) removed.**
+
+The 20 removed rows include several that had more than one problem
+(e.g. S0034 had no date, no quantity, and no payment method) — each
+row is counted once even if it failed multiple checks.
+
+## Database Design & SQL Queries
+
+### Schema
+
+**products** — `product_id` (TEXT, PRIMARY KEY), `product_name` (TEXT NOT NULL),
+`category` (TEXT), `unit_price` (REAL), `in_stock` (INTEGER — 0 or 1, since
+SQLite has no native boolean type)
+
+**sales** — `sale_id` (TEXT, PRIMARY KEY), `product_id` (TEXT NOT NULL,
+FOREIGN KEY → products.product_id), `quantity` (INTEGER NOT NULL),
+`sale_date` (TEXT NOT NULL), `payment_method` (TEXT), `customer_type` (TEXT)
+
+Foreign-key enforcement is enabled per-connection with
+`PRAGMA foreign_keys = ON` — SQLite disables FK enforcement by default, so
+without this pragma the FK constraint would be decorative. `create_tables()`
+drops both tables before recreating them, so the pipeline is idempotent and
+can be re-run without UNIQUE constraint errors.
+
+### Query 1 — Revenue per product (JOIN + GROUP BY + SUM)
+
+```sql
+SELECT p.product_name,
+       ROUND(SUM(s.quantity * p.unit_price), 2) AS revenue
+FROM sales s
+JOIN products p ON s.product_id = p.product_id
+GROUP BY p.product_id, p.product_name
+ORDER BY revenue DESC;

@@ -6,143 +6,136 @@ Task 3: Build a relational database from your cleaned data.
 This module covers KM-04 topics: Introduction to Databases (DBMS,
 components, characteristics) and Structured Query Language (SQL).
 
-You will use Python's built-in `sqlite3` module — no extra install
-needed. SQLite stores the whole database in a single file, which makes
-it perfect for a student project (and easy to include as evidence).
-
-By the end of this file you must be able to:
-  1. Create a database file (store.db) with two related tables.
-  2. Insert your cleaned data into those tables.
-  3. Run at least FIVE meaningful SQL queries against the data,
-     including at least one JOIN and one aggregation (SUM, COUNT, AVG).
+Design notes:
+    - Two tables: products (PK: product_id) and sales (PK: sale_id,
+      FK: product_id -> products.product_id).
+    - Foreign keys are enabled per-connection with PRAGMA foreign_keys = ON.
+      SQLite disables FK enforcement by default — without this pragma the
+      FK constraint is decorative.
+    - create_tables() drops existing tables first so the pipeline can be
+      re-run from scratch without UNIQUE constraint errors.
 """
 
 import sqlite3
 
 
 def get_connection(db_path: str = "store.db") -> sqlite3.Connection:
-    """
-    Open (and create, if needed) the SQLite database file.
-
-    Returns:
-        an open sqlite3.Connection
-    """
-    # TODO: return sqlite3.connect(db_path)
-    raise NotImplementedError
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 
 def create_tables(conn: sqlite3.Connection) -> None:
-    """
-    Create the `products` and `sales` tables if they don't already exist.
+    conn.execute("DROP TABLE IF EXISTS sales")
+    conn.execute("DROP TABLE IF EXISTS products")
 
-    Design requirements (this IS the relational-database design task —
-    think about primary keys and foreign keys, covered in KM-04 KT04):
-
-      products
-        - product_id   TEXT, PRIMARY KEY
-        - product_name TEXT, NOT NULL
-        - category     TEXT
-        - unit_price   REAL
-
-      sales
-        - sale_id        TEXT, PRIMARY KEY
-        - product_id     TEXT, FOREIGN KEY references products(product_id)
-        - quantity       INTEGER
-        - sale_date      TEXT   (store as 'YYYY-MM-DD')
-        - payment_method TEXT
-        - customer_type  TEXT
-
-    TODO:
-        Write two CREATE TABLE IF NOT EXISTS statements (one per table)
-        and execute them using conn.execute(...). Remember to call
-        conn.commit() at the end.
-    """
-    raise NotImplementedError
+    conn.execute("""
+        CREATE TABLE products (
+            product_id   TEXT PRIMARY KEY,
+            product_name TEXT NOT NULL,
+            category     TEXT,
+            unit_price   REAL,
+            in_stock     INTEGER
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE sales (
+            sale_id        TEXT PRIMARY KEY,
+            product_id     TEXT NOT NULL,
+            quantity       INTEGER NOT NULL,
+            sale_date      TEXT NOT NULL,
+            payment_method TEXT,
+            customer_type  TEXT,
+            FOREIGN KEY (product_id) REFERENCES products(product_id)
+        )
+    """)
+    conn.commit()
 
 
 def insert_products(conn: sqlite3.Connection, products_df) -> None:
-    """
-    Insert every row of the cleaned products DataFrame into the
-    products table.
-
-    TODO:
-        Loop through products_df.itertuples() (or use
-        products_df.to_sql("products", conn, if_exists="append", index=False))
-        and insert each row. Remember conn.commit().
-    """
-    raise NotImplementedError
+    products_df.to_sql("products", conn, if_exists="append", index=False)
+    conn.commit()
 
 
 def insert_sales(conn: sqlite3.Connection, sales_df) -> None:
-    """
-    Insert every row of the cleaned sales DataFrame into the sales table.
+    sales_df.to_sql("sales", conn, if_exists="append", index=False)
+    conn.commit()
 
-    TODO: same approach as insert_products().
-    """
-    raise NotImplementedError
-
-
-# ---------------------------------------------------------------------
-# SQL QUERIES — write at least FIVE for your project.
-# Three are started for you below; you must complete them and add TWO
-# more of your own that answer a business question you find interesting.
-# ---------------------------------------------------------------------
 
 def query_total_revenue_per_product(conn: sqlite3.Connection):
     """
-    Return each product's name and its total revenue
-    (quantity * unit_price, summed across all its sales),
-    highest revenue first.
-
-    TODO: write a SQL query that JOINS sales to products on product_id,
-    multiplies quantity * unit_price, and uses SUM() with GROUP BY.
-    Execute it with conn.execute(sql) and return conn.execute(sql).fetchall()
+    Business question: Which products generate the most revenue?
+    Uses INNER JOIN + GROUP BY + SUM (aggregation).
     """
     sql = """
-    -- TODO: write your JOIN + GROUP BY + SUM query here
+        SELECT p.product_name,
+               ROUND(SUM(s.quantity * p.unit_price), 2) AS revenue
+        FROM sales s
+        JOIN products p ON s.product_id = p.product_id
+        GROUP BY p.product_id, p.product_name
+        ORDER BY revenue DESC
     """
-    raise NotImplementedError
+    return conn.execute(sql).fetchall()
 
 
 def query_best_selling_product(conn: sqlite3.Connection):
     """
-    Return the single product with the highest total quantity sold.
-
-    TODO: SUM(quantity) grouped by product, ORDER BY that sum DESC, LIMIT 1.
+    Business question: Which single product sold the most units?
+    Uses INNER JOIN + GROUP BY + SUM + ORDER + LIMIT.
     """
     sql = """
-    -- TODO
+        SELECT p.product_name,
+               SUM(s.quantity) AS total_units
+        FROM sales s
+        JOIN products p ON s.product_id = p.product_id
+        GROUP BY p.product_id, p.product_name
+        ORDER BY total_units DESC
+        LIMIT 1
     """
-    raise NotImplementedError
+    return conn.execute(sql).fetchall()
 
 
 def query_sales_by_payment_method(conn: sqlite3.Connection):
     """
-    Return the number of sales transactions per payment_method.
-
-    TODO: COUNT(*) grouped by payment_method.
+    Business question: How are customers paying?
+    Uses COUNT + GROUP BY.
     """
     sql = """
-    -- TODO
+        SELECT payment_method, COUNT(*) AS num_sales
+        FROM sales
+        GROUP BY payment_method
+        ORDER BY num_sales DESC
     """
-    raise NotImplementedError
+    return conn.execute(sql).fetchall()
 
 
 def query_custom_one(conn: sqlite3.Connection):
     """
-    Your own SQL query #1. Pick a business question that interests you,
-    e.g. "Which category earns the most revenue?" or "How many sales
-    were made to Regular customers vs Walk-in customers?"
-
-    Document the question you chose as the docstring above your SQL.
+    Business question: Which product categories earn the most revenue?
+    Uses INNER JOIN + GROUP BY + SUM.
     """
-    raise NotImplementedError
+    sql = """
+        SELECT p.category,
+               ROUND(SUM(s.quantity * p.unit_price), 2) AS revenue
+        FROM sales s
+        JOIN products p ON s.product_id = p.product_id
+        GROUP BY p.category
+        ORDER BY revenue DESC
+    """
+    return conn.execute(sql).fetchall()
 
 
 def query_custom_two(conn: sqlite3.Connection):
     """
-    Your own SQL query #2. Choose a different type of question from
-    query_custom_one (e.g. use a WHERE filter, or a date range,
-    or a HAVING clause).
+    Business question: Which products have never been sold?
+    Uses LEFT JOIN to find products with no matching sales rows —
+    useful for spotting dead stock.
     """
-    raise NotImplementedError
+    sql = """
+        SELECT p.product_id, p.product_name
+        FROM products p
+        LEFT JOIN sales s ON p.product_id = s.product_id
+        WHERE s.sale_id IS NULL
+        ORDER BY p.product_id
+    """
+    return conn.execute(sql).fetchall()
